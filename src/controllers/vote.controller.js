@@ -274,7 +274,8 @@ exports.castVote = [
               zkProof: {
                 proof: zk.proof,
                 publicSignals: zk.publicSignals,
-                nullifierHash: zk.nullifierHash, // make sure this exists!
+                nullifierHash: zk.nullifierHash, // now a string
+                commitmentHash: zk.commitmentHash, // optional
                 verified: true,
               },
             });

@@ -24,48 +24,159 @@ function serializeField(f) {
 }
 
 // Generate ZK vote proof
-async function generateVoteProof(voterIdHex, candidateIdHex, electionIdHex) {
+// async function generateVoteProof(voterIdHex, candidateIdHex, electionIdHex) {
+//   console.log("\n[generateVoteProof] Starting proof generation...");
+
+//   // Convert hex IDs to BigInt
+//   const voterField = BigInt("0x" + voterIdHex);
+//   const candidateField = BigInt("0x" + candidateIdHex);
+//   const electionField = BigInt("0x" + electionIdHex);
+//   const saltField = generateSalt();
+
+//   // Build Poseidon hash function
+//   const poseidon = await buildPoseidon();
+//   const F = poseidon.F; // F contains the field
+
+//   // Ensure field is ready
+//   if (!F || typeof F.toString !== "function") {
+//     throw new Error("Field not properly initialized");
+//   }
+
+//   // Hashes
+//   // const nullifierHash = F.toString(poseidon([voterField, electionField]));
+//   // const commitmentHash = F.toString(poseidon([candidateField, saltField]));
+
+//   function validateFieldInput(value, fieldName) {
+//     if (typeof value !== "bigint" && typeof value !== "string") {
+//       throw new Error(`${fieldName} must be BigInt or string`);
+//     }
+
+//     // Ensure BigInt is within field bounds
+//     if (typeof value === "bigint" && value < 0n) {
+//       throw new Error(`${fieldName} must be positive`);
+//     }
+//   }
+
+//   // Use before Poseidon hashing
+//   validateFieldInput(voterField, "voterField");
+//   validateFieldInput(candidateField, "candidateField");
+//   validateFieldInput(electionField, "electionField");
+//   validateFieldInput(saltField, "saltField");
+
+//   // ✅ CORRECT - Proper field element handling
+//   const nullifierHashField = poseidon([voterField, electionField]);
+//   const commitmentHashField = poseidon([candidateField, saltField]);
+
+//   const nullifierHash = F.toString(nullifierHashField);
+//   const commitmentHash = F.toString(commitmentHashField);
+
+//   // Build circuit input
+//   const input = {
+//     voterId: voterField.toString(),
+//     candidateId: candidateField.toString(),
+//     electionId: electionField.toString(),
+//     salt: saltField.toString(),
+//     nullifierHash: F.toString(nullifierHash), // Add this
+//     commitmentHash: F.toString(commitmentHash), // Add this if needed
+//   };
+
+//   console.log("[generateVoteProof] Circuit input:", input);
+
+//   const wasmPath = path.resolve(ZK_CONFIG.wasmPath);
+//   const zkeyPath = path.resolve(ZK_CONFIG.zkeyPath);
+
+//   console.log(
+//     `[generateVoteProof] WASM path: ${wasmPath}, ZKEY path: ${zkeyPath}`
+//   );
+//   console.log(
+//     `[generateVoteProof] File exists? WASM: ${fs.existsSync(
+//       wasmPath
+//     )}, ZKEY: ${fs.existsSync(zkeyPath)}`
+//   );
+
+//   try {
+//     const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+//       input,
+//       wasmPath,
+//       zkeyPath
+//     );
+
+//     console.log("[generateVoteProof] Proof generated successfully.");
+//     console.log("[generateVoteProof] Public signals:", publicSignals);
+
+//     return { proof, publicSignals, salt: saltField };
+//   } catch (err) {
+//     console.error("[generateVoteProof] Error generating proof:", err);
+//     throw new Error("Failed to generate vote proof: " + err.message);
+//   }
+// }
+
+async function generateVoteProof(voterId, candidateId, electionId) {
   console.log("\n[generateVoteProof] Starting proof generation...");
 
   // Convert hex IDs to BigInt
-  const voterField = BigInt("0x" + voterIdHex);
-  const candidateField = BigInt("0x" + candidateIdHex);
-  const electionField = BigInt("0x" + electionIdHex);
+  const voterField = BigInt("0x" + voterId);
+  const candidateField = BigInt("0x" + candidateId);
+  const electionField = BigInt("0x" + electionId);
   const saltField = generateSalt();
 
   // Build Poseidon hash function
   const poseidon = await buildPoseidon();
   const F = poseidon.F; // F contains the field
 
+  // Ensure field is ready
+  if (!F || typeof F.toString !== "function") {
+    throw new Error("Field not properly initialized");
+  }
+
   // Hashes
-  const nullifierHash = F.toString(poseidon([voterField, electionField]));
-  const commitmentHash = F.toString(poseidon([candidateField, saltField]));
+  const nullifierHashField = poseidon([voterField, electionField]);
+  const commitmentHashField = poseidon([candidateField, saltField]);
 
-  // Build circuit input
-  const input = {
-    voterId: voterField.toString(),
-    candidateId: candidateField.toString(),
-    electionId: electionField.toString(),
-    salt: saltField.toString(),
-    nullifierHash: F.toString(nullifierHash), // Add this
-    commitmentHash: F.toString(commitmentHash), // Add this if needed
-  };
+  const nullifierHash = F.toString(nullifierHashField);
+  const commitmentHash = F.toString(commitmentHashField);
 
-  console.log("[generateVoteProof] Circuit input:", input);
+  function validateFieldInput(value, fieldName) {
+    if (typeof value !== "bigint" && typeof value !== "string") {
+      throw new Error(`${fieldName} must be BigInt or string`);
+    }
 
-  const wasmPath = path.resolve(ZK_CONFIG.wasmPath);
-  const zkeyPath = path.resolve(ZK_CONFIG.zkeyPath);
+    // Ensure BigInt is within field bounds
+    if (typeof value === "bigint" && value < 0n) {
+      throw new Error(`${fieldName} must be positive`);
+    }
+  }
 
-  console.log(
-    `[generateVoteProof] WASM path: ${wasmPath}, ZKEY path: ${zkeyPath}`
-  );
-  console.log(
-    `[generateVoteProof] File exists? WASM: ${fs.existsSync(
-      wasmPath
-    )}, ZKEY: ${fs.existsSync(zkeyPath)}`
-  );
+  // Use before Poseidon hashing
+  validateFieldInput(voterField, "voterField");
+  validateFieldInput(candidateField, "candidateField");
+  validateFieldInput(electionField, "electionField");
+  validateFieldInput(saltField, "saltField");
 
   try {
+    const input = {
+      voterId: voterField.toString(),
+      candidateId: candidateField.toString(),
+      electionId: electionField.toString(),
+      salt: saltField.toString(),
+      nullifierHash: nullifierHash, // Removed redundant F.toString() call
+      commitmentHash: commitmentHash, // Removed redundant F.toString() call
+    };
+
+    console.log("[generateVoteProof] Circuit input:", input);
+
+    const wasmPath = path.resolve(ZK_CONFIG.wasmPath);
+    const zkeyPath = path.resolve(ZK_CONFIG.zkeyPath);
+
+    console.log(
+      `[generateVoteProof] WASM path: ${wasmPath}, ZKEY path: ${zkeyPath}`
+    );
+    console.log(
+      `[generateVoteProof] File exists? WASM: ${fs.existsSync(
+        wasmPath
+      )}, ZKEY: ${fs.existsSync(zkeyPath)}`
+    );
+
     const { proof, publicSignals } = await snarkjs.groth16.fullProve(
       input,
       wasmPath,
@@ -75,10 +186,16 @@ async function generateVoteProof(voterIdHex, candidateIdHex, electionIdHex) {
     console.log("[generateVoteProof] Proof generated successfully.");
     console.log("[generateVoteProof] Public signals:", publicSignals);
 
-    return { proof, publicSignals, salt: saltField };
-  } catch (err) {
-    console.error("[generateVoteProof] Error generating proof:", err);
-    throw new Error("Failed to generate vote proof: " + err.message);
+    return {
+      proof,
+      publicSignals,
+      salt: saltField,
+      nullifierHash,
+      commitmentHash,
+    };
+  } catch (fieldError) {
+    console.error("[generateVoteProof] Field operation error:", fieldError);
+    throw new Error(`Field conversion failed: ${fieldError.message}`);
   }
 }
 

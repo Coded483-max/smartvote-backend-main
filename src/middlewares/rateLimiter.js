@@ -22,7 +22,7 @@ const createRateLimiter = (options = {}) => {
 
 // Different limits for different endpoints
 const authLimiter = createRateLimiter({ max: 5, windowMs: 900000 }); // 5 requests per 15 min
-const voteLimiter = createRateLimiter({ max: 10, windowMs: 3600000 }); // 10 votes per hour
+const voteLimiter = createRateLimiter({ max: 100, windowMs: 3600000 }); // 10 votes per hour
 const generalLimiter = createRateLimiter({ max: 1000, windowMs: 900000 }); // 1000 requests per 15 min
 
 module.exports = { authLimiter, voteLimiter, generalLimiter };
