@@ -1,0 +1,50 @@
+# docker-compose.yml
+version: "3.8"
+
+services:
+  app:
+    build: .
+    ports:
+      - "3001-3004:3001" # Multiple instances
+    environment:
+      - NODE_ENV=production
+      - MONGODB_URI=mongodb://mongo:27017/smartvote
+      - REDIS_HOST=redis
+    depends_on:
+      - mongo
+      - redis
+    deploy:
+      replicas: 4 # Run 4 instances
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  mongo:
+    image: mongo:6
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    command: mongod --maxConns 1000
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - app
+
+volumes:
+  mongo_data:
+  redis_data:

@@ -1,0 +1,19 @@
+┌──────── Voter’s browser ─────────┐
+│ React-frontend (Netlify/Vercel)  │
+│  ▸ REST → https://api.smartvote   │──┐
+│  ▸ Socket.IO 🔄 live results      │  │
+└───────────────────────────────────┘  │
+                                       ▼
+┌──────────── Express backend (Render / Railway / EC2 / …) ────────────┐
+│ • All Mongo/REST logic you already wrote                             │
+│ • Holds a **server wallet** pre-loaded with free Sepolia ETH         │
+│   – signs `vote()` tx and sends via ethers.js                        │
+│ • Emits `voteCast` ws events                                         │
+│ • Listens to on-chain events with Alchemy / Infura RPC               │
+│ • Env vars:                                                          │
+│     SEPOLIA_RPC          = https://eth-sepolia.g.alchemy.com/v2/…    │
+│     SEPOLIA_PRIVATE_KEY  = 0x….  (server wallet)                     │
+│     CONTRACT_ADDRESS     = 0x… (Sepolia)                             │
+└──────────────────────────────────────────────────────────────────────┘
+                                       ▲
+                               Sepolia testnet

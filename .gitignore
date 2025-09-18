@@ -1,0 +1,119 @@
+# ZK Proof build artifacts (large files)
+build/
+circuits/build/
+*.ptau
+*.r1cs
+*.sym
+*.wasm
+*.zkey
+verification_key.json
+
+production files/
+"production files"/
+uploads/
+
+# Node modules
+node_modules/
+
+# Environment variables (contains sensitive data)
+.env
+.env.local
+.env.development
+.env.production
+
+# Blockchain private keys and wallet files
+*.pem
+*.key
+wallet.json
+private-key.txt
+mnemonic.txt
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+.nyc_output/
+
+# Dependency directories
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
+.env
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+
+# ZK Proof specific artifacts
+pot12_*.ptau
+powersoftau.ptau
+example_proof.json
+
+# Circuit compilation outputs
+circuits/*.r1cs
+circuits/*.sym
+circuits/*.wasm
+circuits/*_js/
+circuits/*_cpp/
+
+# Snark setup files (these are often large)
+setup/
+ceremony/
+*.tau
+
+# Local development files
+.cache/
+dist/
+.nuxt/
+.next/
+.vercel/
+
+# Testing
+test-results/
+coverage/
+.jest/

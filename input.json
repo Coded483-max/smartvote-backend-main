@@ -1,0 +1,8 @@
+{
+  "voterId": 12345,
+  "candidateId": 67890,
+  "electionId": 1,
+  "salt": 98765,
+  "nullifierHash": 11111,
+  "commitmentHash": 22222
+}
