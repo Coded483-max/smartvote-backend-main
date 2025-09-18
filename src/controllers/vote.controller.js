@@ -247,13 +247,11 @@ exports.castVote = [
       }
 
       if (validationErrors.length > 0)
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "Vote validation failed",
-            errors: validationErrors,
-          });
+        return res.status(400).json({
+          success: false,
+          message: "Vote validation failed",
+          errors: validationErrors,
+        });
 
       // ===== 6️⃣ Generate & verify ZK proofs =====
       const zkProofs = [];
@@ -273,7 +271,12 @@ exports.castVote = [
             zkProofs.push({
               positionId: vote.positionId,
               candidateId,
-              zkProof: zk,
+              zkProof: {
+                proof: zk.proof,
+                publicSignals: zk.publicSignals,
+                nullifierHash: zk.nullifierHash, // make sure this exists!
+                verified: true,
+              },
             });
           }
         }

@@ -42,6 +42,14 @@ const { securityMiddleware } = require("./middlewares/security");
 const RedisStore = require("connect-redis").RedisStore;
 const { createClient } = require("redis");
 
+const ZK_CONFIG = {
+  wasmPath: process.env.ZK_WASM_PATH || "./build/vote/vote.wasm",
+  zkeyPath: process.env.ZK_ZKEY_PATH || "./build/vote/vote_final.zkey",
+  vKeyPath: process.env.ZK_VKEY_PATH || "./build/vote/verification_key.json",
+};
+
+console.log("ZK Config:", ZK_CONFIG);
+
 const app = express();
 
 console.log("server starting...");
