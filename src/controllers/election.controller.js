@@ -3,7 +3,7 @@ const Election = require("../models/election.model");
 const Candidate = require("../models/candidate.model");
 const Voter = require("../models/voter.model");
 const PositionTemplate = require("../models/positionTemplate");
-const { contractRO } = require("../services/blockchain");
+const { contractRO, contract } = require("../services/blockchain");
 
 const { sanitizeString } = require("../utils/sanitizeInput");
 const { exportCSV } = require("../utils/csvExporter");
@@ -395,6 +395,62 @@ exports.createElection = async (req, res) => {
       },
     });
 
+    // ✅ Push election to blockchain
+    try {
+      const startTimestamp = Math.floor(startDate.getTime() / 1000);
+      const endTimestamp = Math.floor(endDate.getTime() / 1000);
+
+      const tx = await contract.createElection(
+        title,
+        startTimestamp,
+        endTimestamp
+      );
+      const receipt = await tx.wait();
+
+      console.log("📄 Blockchain transaction receipt:", receipt.txHash);
+
+      // Parse event
+      const event = receipt.logs
+        .map((log) => {
+          try {
+            return contract.interface.parseLog(log);
+          } catch {
+            return null;
+          }
+        })
+        .find((parsed) => parsed?.name === "ElectionCreated");
+
+      if (!event) throw new Error("ElectionCreated event not found");
+
+      const blockchainElectionId = event.args.id.toString();
+
+      // Fetch new election count from blockchain
+      const electionCount = await contract.electionCount();
+
+      console.log(
+        "✅ Election pushed on-chain. Blockchain ID:",
+        electionCount.toString()
+      );
+
+      // Store blockchainId in your MongoDB doc
+      newElection.blockchainElectionId = electionCount.toString();
+      await newElection.save();
+
+      res.status(201).json({
+        success: true,
+        message: "Election created successfully",
+        newElection: {
+          id: newElection._id,
+          blockchainId: newElection.blockchainElectionId,
+          title: newElection.title,
+          level: newElection.level,
+        },
+      });
+    } catch (chainError) {
+      console.error("⚠️ Blockchain sync failed:", chainError);
+      res.status(500).json({ success: false, error: err.message });
+    }
+
     // ✅ ENHANCED RESPONSE WITH VOTER STATISTICS
     const voterStats = {
       total: eligibleVoters.length,
@@ -481,6 +537,7 @@ exports.createElection = async (req, res) => {
         "Election created successfully with auto-determined eligible voters!",
       election: {
         id: newElection._id,
+        blockchainId: newElection.blockchainId || null,
         title: newElection.title,
         level: newElection.level,
         department: newElection.department,

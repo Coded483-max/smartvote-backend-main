@@ -1,98 +1,204 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
-import "./Verifier.sol";
+
+import "./Groth16Verifier.sol";
 
 contract SmartVote {
-    struct Election {
-        string  title;
-        uint256 startTime;   // unix seconds
-        uint256 endTime;
-        bool    exists;
-        mapping(address => bool) hasVoted;
-        mapping(uint256 => uint256) tally;   // candidateId → votes
-    }
+ Groth16Verifier public verifier;
+ address public owner;
+ uint256 public electionCount;
+ uint256 public candidateCount; // 🔹 global candidate counter
 
-    address public owner;
-    uint256 public electionCount;
-    mapping(uint256 => Election) private elections;
+ event ElectionCreated(uint256 indexed id, string title);
+ event CandidateAdded(uint256 indexed electionId, uint256 indexed candidateId);
+ event VoteCast(
+     uint256 indexed electionId,
+     uint256 indexed candidateId,
+     uint256 nullifierHash,
+     uint256 commitmentHash
+ );
 
-    event ElectionCreated(uint256 indexed id, string title);
-    event VoteCast(uint256 indexed electionId, uint256 candidateId, address voter);
+ modifier onlyOwner() {
+     require(msg.sender == owner, "Only owner");
+     _;
+ }
 
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Only owner");
-        _;
-    }
+ constructor(address _verifier) {
+     owner = msg.sender;
+     verifier = Groth16Verifier(_verifier);
+ }
 
-     Groth16Verifier public verifier;
+ struct Election {
+     string title;
+     bool exists;
+     uint256 startTime;
+     uint256 endTime;
+     uint256[] candidateIds;               
+     mapping(uint256 => uint256) tally;    
+     mapping(uint256 => bool) isCandidate; 
+     mapping(uint256 => bool) usedNullifiers; 
+     uint256[] commitments;                
+ }
 
-    constructor(address _verifier) {
-        owner = msg.sender;
-        verifier = Groth16Verifier(_verifier);
-    }
+ mapping(uint256 => Election) private elections;
 
-    function createElection(
-        string calldata _title,
-        uint256 _startTime,
-        uint256 _endTime
-    ) external onlyOwner returns (uint256) {
-        require(_endTime > _startTime, "End must be after start");
+ // ---------- Create election ----------
+ function createElection(
+     string calldata _title,
+     uint256 _startTime,
+     uint256 _endTime
+ ) external onlyOwner returns (uint256) {
+     require(_endTime > _startTime, "End must be after start");
 
-        uint256 id = ++electionCount;
-        Election storage e = elections[id];
-        e.title      = _title;
-        e.startTime  = _startTime;
-        e.endTime    = _endTime;
-        e.exists     = true;
+     uint256 id = ++electionCount;
+     Election storage e = elections[id];
+     e.title = _title;
+     e.startTime = _startTime;
+     e.endTime = _endTime;
+     e.exists = true;
 
-        emit ElectionCreated(id, _title);
-        return id;
-    }
+     emit ElectionCreated(id, _title);
+     return id;
+ }
 
-    function getElection(uint256 _electionId) external view returns (
-    bool exists,
-    uint256 startTime,
-    uint256 endTime
-) {
-    Election storage e = elections[_electionId];
-    return (e.exists, e.startTime, e.endTime);
-}
+ // ---------- Add candidate(s) ----------
+ // Auto-ID candidate
+ function addCandidate(uint256 _electionId) external onlyOwner returns (uint256) {
+     require(elections[_electionId].exists, "Election not found");
 
+     candidateCount += 1;
+     uint256 candidateId = candidateCount;
 
-    function vote(
-   uint256 _electionId,
-    uint256 _candidateId,
-    uint[2] calldata a,
-    uint[2][2] calldata b,
-    uint[2] calldata c,
-    uint[1] calldata input
-) external {
-    Election storage e = elections[_electionId];
-    require(e.exists, "Election not found");
-    require(block.timestamp >= e.startTime && block.timestamp <= e.endTime, "Election not active");
-    require(!e.hasVoted[msg.sender], "Already voted");
+     Election storage e = elections[_electionId];
+     require(!e.isCandidate[candidateId], "Candidate already added");
 
-    require(verifier.verifyProof(a, b, c, input), "Invalid ZKP proof");
+     e.isCandidate[candidateId] = true;
+     e.candidateIds.push(candidateId);
 
-    e.hasVoted[msg.sender] = true;
-    e.tally[_candidateId] += 1;
+     emit CandidateAdded(_electionId, candidateId);
+     return candidateId; 
+ }
 
-    emit VoteCast(_electionId, _candidateId, msg.sender);
-}
+ // Add multiple candidates in one call
+ function addCandidatesBatch(uint256 _electionId, uint256 numCandidates) 
+     external onlyOwner returns (uint256[] memory) 
+ {
+     require(elections[_electionId].exists, "Election not found");
+     uint256[] memory assignedIds = new uint256[](numCandidates);
 
-    function getVotes(uint256 _electionId, uint256 _candidateId)
-        external
-        view
-        returns (uint256)
-    {
-        return elections[_electionId].tally[_candidateId];
-    }
+     for (uint i = 0; i < numCandidates; i++) {
+         candidateCount += 1;
+         uint256 candidateId = candidateCount;
 
-    function hasVoterVoted(uint256 _electionId, address _voter)
-        external
-        view
-        returns (bool)
-    {
-        return elections[_electionId].hasVoted[_voter];
-    }
+         Election storage e = elections[_electionId];
+         e.isCandidate[candidateId] = true;
+         e.candidateIds.push(candidateId);
+
+         emit CandidateAdded(_electionId, candidateId);
+         assignedIds[i] = candidateId;
+     }
+
+     return assignedIds;
+ }
+
+ // ---------- View helpers ----------
+ function getElection(uint256 _electionId)
+     external
+     view
+     returns (bool exists, uint256 startTime, uint256 endTime)
+ {
+     Election storage e = elections[_electionId];
+     return (e.exists, e.startTime, e.endTime);
+ }
+
+ function getCandidates(uint256 _electionId) external view returns (uint256[] memory) {
+     require(elections[_electionId].exists, "Election not found");
+     return elections[_electionId].candidateIds;
+ }
+
+ // ---------- Batch voting ----------
+ function voteBatch(
+     uint256 _electionId,
+     uint256[] calldata candidateIds,
+     uint[2][] calldata a,
+     uint[2][2][] calldata b,
+     uint[2][] calldata c,
+     uint256[3][] calldata input
+ ) external {
+     require(elections[_electionId].exists, "Election does not exist");
+     require(
+         candidateIds.length == a.length &&
+         a.length == b.length &&
+         b.length == c.length &&
+         c.length == input.length,
+         "Mismatched input lengths"
+     );
+
+     Election storage e = elections[_electionId];
+
+     for (uint256 i = 0; i < candidateIds.length; i++) {
+         uint256 candidateId = candidateIds[i];
+         require(e.isCandidate[candidateId], "Candidate not registered");
+
+         uint256 nullifierHash = input[i][0];
+         uint256 commitmentHash = input[i][1];
+         uint256 validFlag = input[i][2];
+
+         require(verifier.verifyProof(a[i], b[i], c[i], input[i]), "Invalid proof");
+         require(validFlag == 1, "Proof not valid");
+         require(!e.usedNullifiers[nullifierHash], "Nullifier already used");
+
+         e.usedNullifiers[nullifierHash] = true;
+         e.tally[candidateId] += 1;
+         e.commitments.push(commitmentHash);
+
+         emit VoteCast(_electionId, candidateId, nullifierHash, commitmentHash);
+     }
+ }
+
+ // ---------- Single voting ----------
+ function vote(
+     uint256 _electionId,
+     uint256 _candidateId,
+     uint[2] calldata a,
+     uint[2][2] calldata b,
+     uint[2] calldata c,
+     uint256[3] calldata input
+ ) external {
+     require(elections[_electionId].exists, "Election does not exist");
+
+     uint256 nullifierHash = input[0];
+     uint256 commitmentHash = input[1];
+     uint256 validFlag = input[2];
+
+     require(verifier.verifyProof(a, b, c, input), "Invalid ZKP proof");
+     require(validFlag == 1, "Proof not valid");
+
+     Election storage e = elections[_electionId];
+     require(e.isCandidate[_candidateId], "Candidate not registered");
+
+     require(!e.usedNullifiers[nullifierHash], "Nullifier already used");
+     e.usedNullifiers[nullifierHash] = true;
+
+     e.tally[_candidateId] += 1;
+     e.commitments.push(commitmentHash);
+
+     emit VoteCast(_electionId, _candidateId, nullifierHash, commitmentHash);
+ }
+
+ // ---------- Views ----------
+ function getVotes(uint256 _electionId, uint256 _candidateId) external view returns (uint256) {
+     require(elections[_electionId].exists, "Election not found");
+     return elections[_electionId].tally[_candidateId];
+ }
+
+ function isNullifierUsed(uint256 _electionId, uint256 nullifier) external view returns (bool) {
+     require(elections[_electionId].exists, "Election not found");
+     return elections[_electionId].usedNullifiers[nullifier];
+ }
+
+ function isCandidate(uint256 _electionId, uint256 _candidateId) external view returns (bool) {
+     require(elections[_electionId].exists, "Election not found");
+     return elections[_electionId].isCandidate[_candidateId];
+ }
 }

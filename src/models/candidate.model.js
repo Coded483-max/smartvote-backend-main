@@ -113,7 +113,11 @@ const candidateSchema = new Schema(
         return this.requiresGPA || false;
       },
     },
-
+    candidateBlockchainId: {
+      type: Number, // or String if you store it as BigInt then cast
+      required: true,
+      unique: false, // unique per election, but multiple elections can reuse
+    },
     electionId: {
       type: Schema.Types.ObjectId,
       ref: "Election",

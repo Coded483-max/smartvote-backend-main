@@ -4,7 +4,10 @@ const hre = require("hardhat");
 
 async function main() {
   // Deploy Groth16Verifier first
-  const Verifier = await hre.ethers.getContractFactory("Groth16Verifier");
+  const Verifier = await hre.ethers.getContractFactory(
+    "contracts/Groth16Verifier.sol:Groth16Verifier"
+  );
+
   const verifier = await Verifier.deploy();
   await verifier.waitForDeployment();
   const verifierAddress = await verifier.getAddress();

@@ -28,6 +28,8 @@ const securityLogSchema = new mongoose.Schema(
         "Password Reset Request",
         "Password Changed",
 
+        "Eligibility Check",
+
         // ✅ Profile Management Events
         "Profile Updated",
         "User Management", // ✅ Added - for general user management

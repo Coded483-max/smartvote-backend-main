@@ -267,6 +267,11 @@ exports.registerCandidate = async (req, res) => {
       });
     }
 
+    // Register on-chain
+    const tx = await contract.addCandidate(blockchainElectionId);
+    const receipt = await tx.wait();
+    const candidateId = receipt.logs[0].args.candidateId; // from CandidateAdded event
+
     // ------------------------
     // Create candidate
     // ------------------------
@@ -299,6 +304,7 @@ exports.registerCandidate = async (req, res) => {
       applicationSubmittedAt: new Date(),
       registrationIP: req.ip,
       userAgent: req.get("User-Agent"),
+      candidateBlockchainId,
     });
 
     // Add candidate to election
@@ -313,7 +319,7 @@ exports.registerCandidate = async (req, res) => {
     );
 
     // 🔹 4. Send confirmation email (skip in dev)
-    if (process.env.NODE_ENV === "production") {
+    if (process.env.NODE_ENV === "development") {
       await sendEmail(
         newCandidate.email,
         "Candidate Registration Received - SmartVote",

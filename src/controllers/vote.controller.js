@@ -168,26 +168,41 @@ exports.castVote = [
       const voterId = voter._id.toString();
 
       // ===== 1️⃣ Input validation =====
-      if (!mongoose.isValidObjectId(electionId))
-        return res
-          .status(400)
-          .json({ success: false, message: "Invalid election ID" });
-      if (!Array.isArray(votes) || votes.length === 0)
-        return res
-          .status(400)
-          .json({ success: false, message: "Votes array is required" });
+      if (!mongoose.isValidObjectId(electionId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid election ID",
+        });
+      }
+      if (!Array.isArray(votes) || votes.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Votes array is required",
+        });
+      }
 
       // ===== 2️⃣ Fetch election (cache first) =====
       const cacheKey = `election:${electionId}:data`;
       let election = await cacheService.get(cacheKey);
       if (!election) {
         election = await Election.findById(electionId).select("-votes").lean();
-        if (!election)
-          return res
-            .status(404)
-            .json({ success: false, message: "Election not found" });
+        if (!election) {
+          return res.status(404).json({
+            success: false,
+            message: "Election not found",
+          });
+        }
         await cacheService.set(cacheKey, election, 600);
       }
+
+      // ✅ Ensure election has a blockchainElectionId
+      if (!election.blockchainElectionId) {
+        return res.status(400).json({
+          success: false,
+          message: "Election not deployed on blockchain",
+        });
+      }
+      const blockchainElectionId = BigInt(election.blockchainElectionId);
 
       // ===== 3️⃣ Election timing check =====
       const now = Date.now();
@@ -195,10 +210,12 @@ exports.castVote = [
         election.status !== "voting" ||
         (election.voteStart && now < new Date(election.voteStart).getTime()) ||
         (election.voteEnd && now > new Date(election.voteEnd).getTime())
-      )
-        return res
-          .status(400)
-          .json({ success: false, message: "Election is not active" });
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Election is not active",
+        });
+      }
 
       // ===== 4️⃣ Check if voter already voted =====
       const voterCacheKey = `election:${electionId}:voter:${voterId}`;
@@ -210,10 +227,12 @@ exports.castVote = [
         });
         await cacheService.set(voterCacheKey, !!hasVoted, 3600);
       }
-      if (hasVoted)
-        return res
-          .status(400)
-          .json({ success: false, message: "You have already voted" });
+      if (hasVoted) {
+        return res.status(400).json({
+          success: false,
+          message: "You have already voted",
+        });
+      }
 
       // ===== 5️⃣ Validate votes =====
       const validVotes = [];
@@ -250,16 +269,16 @@ exports.castVote = [
         validVotes.push(vote);
       }
 
-      if (validationErrors.length > 0)
+      if (validationErrors.length > 0) {
         return res.status(400).json({
           success: false,
           message: "Vote validation failed",
           errors: validationErrors,
         });
+      }
 
       // ===== 6️⃣ Generate & verify ZK proofs =====
       const zkProofs = [];
-
       if (useZKProof) {
         for (const vote of validVotes) {
           for (const candidateId of vote.candidateIds) {
@@ -278,8 +297,8 @@ exports.castVote = [
               zkProof: {
                 proof: zk.proof,
                 publicSignals: zk.publicSignals,
-                nullifierHash: zk.nullifierHash, // now a string
-                commitmentHash: zk.commitmentHash, // optional
+                nullifierHash: zk.nullifierHash.toString(),
+                commitmentHash: zk.commitmentHash?.toString(),
                 verified: true,
               },
             });
@@ -288,37 +307,42 @@ exports.castVote = [
       }
 
       // ===== 7️⃣ Submit votes to blockchain + persist nullifiers =====
-      for (const zk of zkProofs) {
-        const result = await submitVoteToBlockchain(
-          electionId,
-          zk.candidateId,
-          zk.zkProof
-        );
+      // ===== 7️⃣ Submit votes atomically on-chain (batch) + persist nullifiers =====
+      const candidateIds = zkProofs.map((zk) => zk.candidateBlockchainId);
+      const a = zkProofs.map((zk) => zk.zkProof.proof.a);
+      const b = zkProofs.map((zk) => zk.zkProof.proof.b);
+      const c = zkProofs.map((zk) => zk.zkProof.proof.c);
+      const input = zkProofs.map((zk) => zk.zkProof.publicSignals);
 
-        if (!result?.txHash || !result?.blockNumber) {
-          throw new Error(
-            "Blockchain submission failed: missing txHash or blockNumber"
-          );
-        }
+      // Single blockchain call
+      const tx = await contract.voteBatch(
+        blockchainElectionId,
+        candidateIds,
+        a,
+        b,
+        c,
+        input
+      );
 
-        zk.zkProof.txHash = result.txHash;
-        zk.zkProof.blockNumber = result.blockNumber;
+      const receipt = await tx.wait(); // confirm mined
 
-        console.log(
-          "Blockchain data before saving to DB: ",
-          zk.zkProof.blockNumber,
-          zk.zkProof.txHash
-        );
+      // Attach blockchain metadata to all zkProofs
+      zkProofs.forEach((zk) => {
+        zk.zkProof.txHash = receipt.transactionHash;
+        zk.zkProof.blockNumber = receipt.blockNumber;
+      });
 
-        await Nullifier.create({
+      // Persist nullifiers for all votes
+      await Nullifier.insertMany(
+        zkProofs.map((zk) => ({
           hash: zk.zkProof.nullifierHash,
           electionId,
           voterId,
           timestamp: new Date(),
-        });
-      }
+        }))
+      );
 
-      // ===== 8️⃣ Save votes to DB (with blockchain info) =====
+      // ===== 8️⃣ Save votes to DB =====
       const dbVotes = zkProofs.map((zk) => ({
         positionId: zk.positionId,
         candidateId: zk.candidateId,
@@ -365,12 +389,15 @@ exports.castVote = [
       });
     } catch (err) {
       console.error("[castVote] Error:", err);
-      res
-        .status(500)
-        .json({ success: false, message: "Server error", error: err.message });
+      res.status(500).json({
+        success: false,
+        message: "Server error",
+        error: err.message,
+      });
     }
   },
 ];
+
 /* ─────────────────────────── verifyVote ─────────────────────────── */
 /**
  * GET /api/votes/verify/:txHash

@@ -121,8 +121,9 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Enable CORS
 app.use(morgan("dev")); // Logging
-app.use(express.json()); // Parse JSON bodies
-app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
+app.use(express.json({ limit: "20mb" }));
+app.use(express.urlencoded({ limit: "20mb", extended: true }));
+
 app.use(inputSanitizer); // ✅ Custom input sanitization
 app.use(cookieParser()); // Parse cookies
 // app.use(authLimiter); // ✅ Global rate limiter

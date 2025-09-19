@@ -32,7 +32,11 @@ const electionSchema = new Schema(
         maxCandidates: { type: Number, default: null },
       },
     ],
-
+    // 🆕 On-chain mapping
+    blockchainElectionId: {
+      type: String, // store as string so you can safely convert to BigInt
+      index: true,
+    },
     /* ——— Timeline overview (legacy window kept) ——— */
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },

@@ -65,10 +65,20 @@ try {
     console.warn("⚠️ ABI file not found, using minimal ABI");
     // Minimal ABI for basic functionality
     abi = [
-      "function castVote(uint256 electionId, uint256 candidateId) external",
-      "function getVotes(uint256 electionId, uint256 candidateId) external view returns (uint256)",
-      "function hasVoted(uint256 electionId, address voter) external view returns (bool)",
-      "event VoteCast(uint256 indexed electionId, uint256 indexed candidateId, address indexed voter)",
+      // ─────────── Core election management ───────────
+      "function createElection(string _title, uint256 _startTime, uint256 _endTime) external returns (uint256)",
+      "function getElection(uint256 _electionId) external view returns (bool exists, uint256 startTime, uint256 endTime)",
+      "function electionCount() external view returns (uint256)",
+      "function owner() external view returns (address)",
+
+      // ─────────── Voting (ZK-SNARK) ───────────
+      "function vote(uint256 _electionId, uint256 _candidateId, uint[2] a, uint[2][2] b, uint[2] c, uint256[3] input) external",
+      "function getVotes(uint256 _electionId, uint256 _candidateId) external view returns (uint256)",
+      "function isNullifierUsed(uint256 _electionId, uint256 nullifier) external view returns (bool)",
+
+      // ─────────── Events ───────────
+      "event ElectionCreated(uint256 indexed id, string title)",
+      "event VoteCast(uint256 indexed electionId, uint256 indexed candidateId, uint256 nullifierHash, uint256 commitmentHash)",
     ];
   }
 } catch (error) {
@@ -187,112 +197,90 @@ function objectIdToBigInt(objectId) {
   return BigInt("0x" + hex);
 }
 
-async function submitVoteToBlockchain(electionId, candidateId, zkProof) {
-  console.log("[v2] submitVoteToBlockchain called with:", {
-    electionId,
-    candidateId,
-    zkProof: zkProof
-      ? { ...zkProof, nullifierHash: zkProof.nullifierHash }
-      : null,
-  });
+// async function submitVoteToBlockchain(electionId, candidateId, zkProof) {
+//   console.log("[v2] submitVoteToBlockchain called with:", {
+//     electionId,
+//     candidateId,
+//     zkProof: zkProof
+//       ? { ...zkProof, nullifierHash: zkProof.nullifierHash }
+//       : null,
+//   });
 
-  if (!zkProof) throw new Error("zkProof is required");
+//   if (!zkProof) throw new Error("zkProof is required");
 
+//   try {
+//     // zkProof is assumed to have `proof` and `publicSignals`
+//     const a = [zkProof.proof.pi_a[0], zkProof.proof.pi_a[1]];
+//     const b = [
+//       [zkProof.proof.pi_b[0][0], zkProof.proof.pi_b[0][1]],
+//       [zkProof.proof.pi_b[1][0], zkProof.proof.pi_b[1][1]],
+//     ];
+//     const c = [zkProof.proof.pi_c[0], zkProof.proof.pi_c[1]];
+
+//     // publicSignals = [nullifierHash, commitmentHash, 1]
+//     const input = [
+//       zkProof.publicSignals[0],
+//       zkProof.publicSignals[1],
+//       zkProof.publicSignals[2],
+//     ];
+
+//     console.log("📥 Submitting vote with params:", { a, b, c, input });
+
+//     const tx = await contract.vote(electionId, candidateId, a, b, c, input);
+//     const receipt = await tx.wait();
+
+//     console.log(`✅ Vote cast! TxHash=${receipt.transactionHash}`);
+//   } catch (err) {
+//     console.error("❌ Vote submission failed:", err);
+//   }
+// }
+
+/**
+ * Submit a vote to the SmartVote contract
+ * @param {string|number|BigInt} blockchainElectionId - On-chain election ID
+ * @param {string|number|BigInt} candidateId - Candidate ID
+ * @param {object} zkProof - ZK proof object (with proof & signals)
+ * @returns {Promise<{ txHash: string, blockNumber: number }>}
+ */
+async function submitVoteToBlockchain(
+  blockchainElectionId,
+  candidateId,
+  zkProof
+) {
   try {
-    // Convert IDs
-    const electionIdBigInt =
-      typeof electionId === "string"
-        ? BigInt("0x" + electionId)
-        : BigInt(electionId);
-    const candidateIdBigInt = objectIdToBigInt(candidateId);
+    // ✅ Convert to BigInt to avoid overflow
+    const electionIdBN = BigInt(blockchainElectionId);
+    const candidateIdBN = BigInt(candidateId);
 
-    console.log("[v2] Converted IDs to BigInt:", {
-      electionIdBigInt,
-      candidateIdBigInt,
-    });
+    const { proof, publicSignals } = zkProof;
 
-    // Fetch election from contract
-    const election = await contract.getElection(electionIdBigInt);
-    console.log("[v2] Raw on-chain election:", election);
-
-    if (!election.exists)
-      throw new Error(`Election ${electionId} does not exist on-chain`);
-
-    // Check times (ensure all in seconds)
-    const startTime = BigInt(election.startTime);
-    const endTime = BigInt(election.endTime);
-    const now = BigInt(Math.floor(Date.now() / 1000));
-
-    console.log("[v2] Election times (seconds):", {
-      startTime: startTime.toString(),
-      endTime: endTime.toString(),
-      now: now.toString(),
-    });
-
-    if (now < startTime) console.warn("Election has not started yet");
-    if (now > endTime) console.warn("Election has already ended");
-
-    if (now < startTime || now > endTime) {
-      throw new Error(
-        `Election not active. Start: ${startTime}, End: ${endTime}, Now: ${now}`
-      );
+    if (!proof || !publicSignals) {
+      throw new Error("Missing zkProof data");
     }
 
-    // Check if voter has already voted
-    const hasVoted = await contract.hasVoterVoted(
-      electionIdBigInt,
-      signer.address
-    );
-    if (hasVoted) throw new Error("Voter has already voted");
+    // zkSNARK proof fields (Groth16)
+    const a = [proof.pi_a[0].toString(), proof.pi_a[1].toString()];
+    const b = [
+      [proof.pi_b[0][0].toString(), proof.pi_b[0][1].toString()],
+      [proof.pi_b[1][0].toString(), proof.pi_b[1][1].toString()],
+    ];
+    const c = [proof.pi_c[0].toString(), proof.pi_c[1].toString()];
 
-    // Check candidate validity
-    const candidateVotes = await contract.getVotes(
-      electionIdBigInt,
-      candidateIdBigInt
-    );
-    if (candidateVotes === undefined)
-      throw new Error("Candidate ID is invalid for this election");
+    // Public signals (nullifier, commitment, etc.)
+    // adjust order if your circuit defines differently
+    const input = publicSignals.map((x) => x.toString());
 
-    console.log("✅ Pre-vote validation passed");
-
-    // Extract zkProof components
-    const a = zkProof.proof.pi_a.slice(0, 2).map(BigInt);
-    const b = zkProof.proof.pi_b
-      .slice(0, 2)
-      .map((row) => row.slice(0, 2).map(BigInt));
-    const c = zkProof.proof.pi_c.slice(0, 2).map(BigInt);
-    const input = [BigInt(zkProof.publicSignals[0])];
-
-    console.log("[v2] Calling contract.vote...");
-    const tx = await contract.vote(
-      electionIdBigInt,
-      candidateIdBigInt,
-      a,
-      b,
-      c,
-      input
-    );
-
-    console.log("[v2] Transaction sent, waiting for confirmation...");
+    // 📝 Call vote()
+    const tx = await contract.vote(electionIdBN, candidateIdBN, a, b, c, input);
     const receipt = await tx.wait();
-
-    console.log(
-      `[v2] Vote submitted: txHash=${receipt.transactionHash}, blockNumber=${receipt.blockNumber}`
-    );
 
     return {
       txHash: receipt.transactionHash,
       blockNumber: receipt.blockNumber,
     };
   } catch (err) {
-    console.error("[submitVoteToBlockchain] Error:", {
-      message: err.message,
-      stack: err.stack,
-      electionId,
-      candidateId,
-      zkProof,
-    });
-    throw new Error(`Blockchain submission failed: ${err.message}`);
+    console.error("[submitVoteToBlockchain] Error:", err);
+    throw new Error("Failed to submit vote to blockchain: " + err.message);
   }
 }
 
