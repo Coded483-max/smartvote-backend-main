@@ -38,6 +38,8 @@ const path = require("path");
 const fs = require("fs");
 const { ethers } = require("ethers");
 
+const { ObjectId } = require("mongodb");
+
 /* ───────────────────────── Load environment variables ───────────────────────── */
 require("dotenv").config({
   path: path.join(__dirname, "../../.env"),
@@ -131,10 +133,174 @@ async function testConnection() {
 // Test connection on module load
 testConnection();
 
+/**
+ * Submit a vote to the blockchain
+ * @param {string|number} electionId
+ * @param {string|number} candidateId
+ * @param {Object} zkProof - Zero-knowledge proof object containing nullifierHash and optional commitmentHash
+ * @returns {Promise<{txHash: string, blockNumber: number}>}
+ */
+function toBigIntFromHex(value) {
+  console.log("[v1] toBigIntFromHex called with:", {
+    value,
+    type: typeof value,
+  });
+
+  if (!value) throw new Error("Value is required for BigInt conversion");
+
+  // Handle number or BigInt
+  if (typeof value === "number" || typeof value === "bigint")
+    return BigInt(value);
+
+  // Handle string
+  if (typeof value === "string") {
+    const cleanValue = value.trim();
+    if (!/^[0-9a-fA-F]+$/.test(cleanValue)) {
+      throw new Error(`Invalid hex string format: ${cleanValue}`);
+    }
+    return BigInt("0x" + cleanValue);
+  }
+
+  // Handle MongoDB ObjectId
+  if (value instanceof ObjectId) {
+    return BigInt("0x" + value.toHexString());
+  }
+
+  throw new Error(`Invalid value type for BigInt conversion: ${typeof value}`);
+}
+
+function isValidObjectId(id) {
+  return typeof id === "string" && /^[0-9a-fA-F]{24}$/.test(id);
+}
+
+function objectIdToBigInt(objectId) {
+  let hex;
+
+  if (typeof objectId === "string" && /^[0-9a-fA-F]{24}$/.test(objectId)) {
+    hex = objectId;
+  } else if (objectId instanceof ObjectId) {
+    hex = objectId.toHexString();
+  } else {
+    throw new Error(`Invalid MongoDB ObjectId: ${objectId}`);
+  }
+
+  return BigInt("0x" + hex);
+}
+
+async function submitVoteToBlockchain(electionId, candidateId, zkProof) {
+  console.log("[v2] submitVoteToBlockchain called with:", {
+    electionId,
+    candidateId,
+    zkProof: zkProof
+      ? { ...zkProof, nullifierHash: zkProof.nullifierHash }
+      : null,
+  });
+
+  if (!zkProof) throw new Error("zkProof is required");
+
+  try {
+    // Convert IDs
+    const electionIdBigInt =
+      typeof electionId === "string"
+        ? BigInt("0x" + electionId)
+        : BigInt(electionId);
+    const candidateIdBigInt = objectIdToBigInt(candidateId);
+
+    console.log("[v2] Converted IDs to BigInt:", {
+      electionIdBigInt,
+      candidateIdBigInt,
+    });
+
+    // Fetch election from contract
+    const election = await contract.getElection(electionIdBigInt);
+    console.log("[v2] Raw on-chain election:", election);
+
+    if (!election.exists)
+      throw new Error(`Election ${electionId} does not exist on-chain`);
+
+    // Check times (ensure all in seconds)
+    const startTime = BigInt(election.startTime);
+    const endTime = BigInt(election.endTime);
+    const now = BigInt(Math.floor(Date.now() / 1000));
+
+    console.log("[v2] Election times (seconds):", {
+      startTime: startTime.toString(),
+      endTime: endTime.toString(),
+      now: now.toString(),
+    });
+
+    if (now < startTime) console.warn("Election has not started yet");
+    if (now > endTime) console.warn("Election has already ended");
+
+    if (now < startTime || now > endTime) {
+      throw new Error(
+        `Election not active. Start: ${startTime}, End: ${endTime}, Now: ${now}`
+      );
+    }
+
+    // Check if voter has already voted
+    const hasVoted = await contract.hasVoterVoted(
+      electionIdBigInt,
+      signer.address
+    );
+    if (hasVoted) throw new Error("Voter has already voted");
+
+    // Check candidate validity
+    const candidateVotes = await contract.getVotes(
+      electionIdBigInt,
+      candidateIdBigInt
+    );
+    if (candidateVotes === undefined)
+      throw new Error("Candidate ID is invalid for this election");
+
+    console.log("✅ Pre-vote validation passed");
+
+    // Extract zkProof components
+    const a = zkProof.proof.pi_a.slice(0, 2).map(BigInt);
+    const b = zkProof.proof.pi_b
+      .slice(0, 2)
+      .map((row) => row.slice(0, 2).map(BigInt));
+    const c = zkProof.proof.pi_c.slice(0, 2).map(BigInt);
+    const input = [BigInt(zkProof.publicSignals[0])];
+
+    console.log("[v2] Calling contract.vote...");
+    const tx = await contract.vote(
+      electionIdBigInt,
+      candidateIdBigInt,
+      a,
+      b,
+      c,
+      input
+    );
+
+    console.log("[v2] Transaction sent, waiting for confirmation...");
+    const receipt = await tx.wait();
+
+    console.log(
+      `[v2] Vote submitted: txHash=${receipt.transactionHash}, blockNumber=${receipt.blockNumber}`
+    );
+
+    return {
+      txHash: receipt.transactionHash,
+      blockNumber: receipt.blockNumber,
+    };
+  } catch (err) {
+    console.error("[submitVoteToBlockchain] Error:", {
+      message: err.message,
+      stack: err.stack,
+      electionId,
+      candidateId,
+      zkProof,
+    });
+    throw new Error(`Blockchain submission failed: ${err.message}`);
+  }
+}
+
 module.exports = {
   contract,
   contractRO,
   provider,
   wallet,
   testConnection,
+  submitVoteToBlockchain,
 };

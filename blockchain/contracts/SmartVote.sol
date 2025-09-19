@@ -49,7 +49,15 @@ contract SmartVote {
         return id;
     }
 
-    
+    function getElection(uint256 _electionId) external view returns (
+    bool exists,
+    uint256 startTime,
+    uint256 endTime
+) {
+    Election storage e = elections[_electionId];
+    return (e.exists, e.startTime, e.endTime);
+}
+
 
     function vote(
    uint256 _electionId,

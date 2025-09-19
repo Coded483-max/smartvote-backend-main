@@ -6,7 +6,11 @@ const crypto = require("crypto");
 const mongoose = require("mongoose");
 const Election = require("../models/election.model");
 const Candidate = require("../models/candidate.model");
-const { contract, contractRO } = require("../services/blockchain");
+const {
+  contract,
+  contractRO,
+  submitVoteToBlockchain,
+} = require("../services/blockchain");
 
 const { getIO } = require("../services/socket");
 const { sendEmail } = require("../utils/emailService");
@@ -283,7 +287,38 @@ exports.castVote = [
         }
       }
 
-      // ===== 7️⃣ Save votes to DB =====
+      // ===== 7️⃣ Submit votes to blockchain + persist nullifiers =====
+      for (const zk of zkProofs) {
+        const result = await submitVoteToBlockchain(
+          electionId,
+          zk.candidateId,
+          zk.zkProof
+        );
+
+        if (!result?.txHash || !result?.blockNumber) {
+          throw new Error(
+            "Blockchain submission failed: missing txHash or blockNumber"
+          );
+        }
+
+        zk.zkProof.txHash = result.txHash;
+        zk.zkProof.blockNumber = result.blockNumber;
+
+        console.log(
+          "Blockchain data before saving to DB: ",
+          zk.zkProof.blockNumber,
+          zk.zkProof.txHash
+        );
+
+        await Nullifier.create({
+          hash: zk.zkProof.nullifierHash,
+          electionId,
+          voterId,
+          timestamp: new Date(),
+        });
+      }
+
+      // ===== 8️⃣ Save votes to DB (with blockchain info) =====
       const dbVotes = zkProofs.map((zk) => ({
         positionId: zk.positionId,
         candidateId: zk.candidateId,
@@ -298,16 +333,6 @@ exports.castVote = [
         },
         { new: false }
       );
-
-      // ===== 8️⃣ Persist nullifiers =====
-      for (const zk of zkProofs) {
-        await Nullifier.create({
-          hash: zk.zkProof.nullifierHash,
-          electionId,
-          voterId,
-          timestamp: new Date(),
-        });
-      }
 
       // ===== 9️⃣ Invalidate caches =====
       await Promise.all([
